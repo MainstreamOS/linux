@@ -1517,6 +1517,17 @@ config KEMPLD_WDT
 	  This driver can also be built as a module. If so, the module will be
 	  called kempld_wdt.
 
+config MACSMC_WDT
+	tristate "Apple SMC Watchdog"
+	depends on X86 && MACSMC_ACPI
+	select WATCHDOG_CORE
+	help
+	  This driver adds support for the watchdog in Intel Macs using
+	  the Apple SMC.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called macsmc_wdt.
+
 config SC1200_WDT
 	tristate "National Semiconductor PC87307/PC97307 (ala SC1200) Watchdog"
 	depends on (X86 || COMPILE_TEST) && HAS_IOPORT

@@ -3,6 +3,7 @@
  * RTC related functions
  */
 #include <linux/acpi.h>
+#include <linux/platform_data/x86/apple.h>
 #include <linux/platform_device.h>
 #include <linux/mc146818rtc.h>
 #include <linux/export.h>
@@ -101,6 +102,10 @@ EXPORT_SYMBOL(rtc_cmos_write);
 
 int update_persistent_clock64(struct timespec64 now)
 {
+	if (IS_ENABLED(CONFIG_MACSMC_ACPI) &&
+			IS_ENABLED(CONFIG_RTC_DRV_MACSMC) && has_apple_t2_chip)
+		return -ENODEV;
+
 	return x86_platform.set_wallclock(&now);
 }
 

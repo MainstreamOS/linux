@@ -640,6 +640,10 @@ static int acpi_sbs_probe(struct platform_device *pdev)
 	int result = 0;
 	int id;
 
+	if (IS_ENABLED(CONFIG_MACSMC_ACPI) &&
+			IS_ENABLED(CONFIG_MACSMC_POWER) && x86_apple_machine)
+		return -ENODEV;
+
 	device = ACPI_COMPANION(&pdev->dev);
 	if (!device)
 		return -ENODEV;
@@ -670,7 +674,6 @@ static int acpi_sbs_probe(struct platform_device *pdev)
 					acpi_battery_add(sbs, id);
 		}
 	}
-
 	if (!sbs->manager_present)
 		acpi_battery_add(sbs, 0);
 

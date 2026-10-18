@@ -8,44 +8,9 @@
 #ifndef _LINUX_MFD_MACSMC_H
 #define _LINUX_MFD_MACSMC_H
 
+#include <linux/miscdevice.h>
 #include <linux/soc/apple/rtkit.h>
-
-/**
- * typedef smc_key - Alias for u32 to be used for SMC keys
- *
- * SMC keys are 32bit integers containing packed ASCII characters in natural
- * integer order, i.e. 0xAABBCCDD, which represent the FourCC ABCD.
- * The SMC driver is designed with this assumption and ensures the right
- * endianness is used when these are stored to memory and sent to or received
- * from the actual SMC firmware (which can be done in either shared memory or
- * as 64bit mailbox message on Apple Silicon).
- * Internally, SMC stores these keys in a table sorted lexicographically and
- * allows resolving an index into this table to the corresponding SMC key.
- * Thus, storing keys as u32 is very convenient as it allows to e.g. use
- * normal comparison operators which directly map to the natural order used
- * by SMC firmware.
- *
- * This simple type alias is introduced to allow easy recognition of SMC key
- * variables and arguments.
- */
-typedef u32 smc_key;
-
-/**
- * SMC_KEY - Convert FourCC SMC keys in source code to smc_key
- *
- * This macro can be used to easily define FourCC SMC keys in source code
- * and convert these to u32 / smc_key, e.g. SMC_KEY(NTAP) will expand to
- * 0x4e544150.
- *
- * @s: FourCC SMC key to be converted
- */
-#define SMC_KEY(s) (smc_key)(_SMC_KEY(#s))
-#define _SMC_KEY(s) (((s)[0] << 24) | ((s)[1] << 16) | ((s)[2] << 8) | (s)[3])
-#define __SMC_KEY(a, b, c, d) (((u32)(a) << 24) | ((u32)(b) << 16) | ((u32)(c) << 8) | ((u32)(d)))
-
-#define APPLE_SMC_READABLE BIT(7)
-#define APPLE_SMC_WRITABLE BIT(6)
-#define APPLE_SMC_FUNCTION BIT(4)
+#include <uapi/linux/macsmc.h>
 
 #define SMC_MSG_READ_KEY                0x10
 #define SMC_MSG_WRITE_KEY               0x11
@@ -65,25 +30,6 @@ typedef u32 smc_key;
 #define SMC_INT_SMS_ORIENTATION 0x69
 #define SMC_INT_SMS_SHOCK               0x6F
 #define SMC_INT_PLIMIT_CHANGED          0x80
-
-/**
- * struct apple_smc_key_info - Information for a SMC key as returned by SMC
- * @type_code: FourCC code indicating the type for this key.
- *             Known types:
- *              ch8*: ASCII string
- *              flag: Boolean, 1 or 0
- *              flt: 32-bit single-precision IEEE 754 float
- *              hex: Binary data
- *              ioft: 64bit Unsigned fixed-point intger (48.16)
- *              {si,ui}{8,16,32,64}: Signed/Unsigned 8-/16-/32-/64-bit integer
- * @size: Size of the buffer associated with this key
- * @flags: Bitfield encoding flags (APPLE_SMC_{READABLE,WRITABLE,FUNCTION})
- */
-struct apple_smc_key_info {
-	u32 type_code;
-	u8 size;
-	u8 flags;
-};
 
 /**
  * enum apple_smc_boot_stage - SMC boot stage
@@ -136,6 +82,7 @@ struct apple_smc_backend_ops {
  * @is_acpi: Is the backend ACPI based
  * @mutex: Mutex for non-atomic mode
  * @lock: Spinlock for atomic mode
+ * @miscdev: Misc Device struct for ioctl ops
  */
 struct apple_smc {
 	struct device *dev;
@@ -152,6 +99,8 @@ struct apple_smc {
 
 	struct mutex mutex;
 	spinlock_t lock;
+
+	struct miscdevice miscdev;
 };
 
 /**

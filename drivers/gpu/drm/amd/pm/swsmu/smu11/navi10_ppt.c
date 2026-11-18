@@ -2151,6 +2151,7 @@ static int navi10_init_ppt_limits(struct smu_context *smu)
 	struct smu_11_0_powerplay_table *powerplay_table =
 		(struct smu_11_0_powerplay_table *)smu->smu_table.power_play_table;
 	struct smu_11_0_overdrive_table *od_settings = smu->od_settings;
+	struct pci_dev *pdev = smu->adev->pdev;
 	PPTable_t *pptable = smu->smu_table.driver_pptable;
 	uint32_t default_limit[SMU_POWER_SOURCE_COUNT];
 	uint32_t od_percent_upper = 0, od_percent_lower = 0;
@@ -2174,6 +2175,16 @@ static int navi10_init_ppt_limits(struct smu_context *smu)
 			SMU_11_0_ODSETTING_POWERPERCENTAGE]);
 		od_percent_lower = le32_to_cpu(powerplay_table->overdrive_table.min[
 			SMU_11_0_ODSETTING_POWERPERCENTAGE]);
+	}
+
+	if (!od_percent_lower && pdev->subsystem_vendor == PCI_VENDOR_ID_APPLE) {
+		/* The 60% value is from macOS kexts themselves, but we use 90%
+		 * for non mobile macs like iMacs, so we get the maximum performance
+		 * for both */
+		if (pdev->subsystem_device == 0x218 || pdev->subsystem_device == 0x219)
+			od_percent_lower = 90;
+		else
+			od_percent_lower = 60;
 	}
 
 	for (i = SMU_POWER_SOURCE_AC; i < SMU_POWER_SOURCE_COUNT; i++) {

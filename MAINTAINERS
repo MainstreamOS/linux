@@ -2058,12 +2058,6 @@ L:	linux-pci@vger.kernel.org
 S:	Maintained
 F:	drivers/pci/controller/pcie-apple.c
 
-APPLE SMC DRIVER
-M:	Henrik Rydberg <rydberg@bitmath.org>
-L:	linux-hwmon@vger.kernel.org
-S:	Odd fixes
-F:	drivers/hwmon/applesmc.c
-
 APPLETALK NETWORK LAYER
 L:	netdev@vger.kernel.org
 S:	Obsolete

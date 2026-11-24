@@ -102,6 +102,15 @@ static void quirk_panel_replay_exit_on_flush(struct intel_dp *intel_dp)
 	drm_info(display->drm, "Applying Panel Replay exit on flush quirk\n");
 }
 
+static void quirk_disable_psr_and_panel_replay(struct intel_dp *intel_dp)
+{
+	struct intel_display *display = to_intel_display(intel_dp);
+
+	intel_set_dpcd_quirk(intel_dp, QUIRK_DISABLE_EDP_PANEL_REPLAY);
+	intel_set_dpcd_quirk(intel_dp, QUIRK_DISABLE_PSR);
+	drm_info(display->drm, "Applying disable PSR and Panel Replay quirk\n");
+}
+
 static void quirk_disable_psr2(struct intel_display *display)
 {
 	intel_set_quirk(display, QUIRK_DISABLE_PSR2);
@@ -318,6 +327,15 @@ static const struct intel_dpcd_quirk intel_dpcd_quirks[] = {
 		.subsystem_device = 0x0e54,
 		.sink_oui = SINK_OUI(0x00, 0x22, 0xb9),
 		.hook = quirk_disable_edp_panel_replay,
+	},
+	/* Dell XPS 13 DX13260 (Wildcat Lake), sink "Bamboo" */
+	{
+		.device = DEVICE_ID_ANY,
+		.subsystem_vendor = 0x1028,
+		.subsystem_device = 0x0e53,
+		.sink_oui = SINK_OUI(0x00, 0x22, 0xb9),
+		.sink_device_id = SINK_DEVICE_ID(0x42, 0x61, 0x6d, 0x62, 0x6f, 0x6f),
+		.hook = quirk_disable_psr_and_panel_replay,
 	},
 	/* TUXEDO InsanityBook 15 v1 */
 	{

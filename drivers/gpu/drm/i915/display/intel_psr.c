@@ -669,6 +669,9 @@ static void _psr_init_dpcd(struct intel_dp *intel_dp, struct intel_connector *co
 		return;
 	}
 
+	if (intel_has_dpcd_quirk(intel_dp, QUIRK_DISABLE_PSR))
+		return;
+
 	if (!(intel_dp->edp_dpcd[1] & DP_EDP_SET_POWER_CAP)) {
 		drm_dbg_kms(display->drm,
 			    "Panel lacks power state control, PSR cannot be enabled\n");

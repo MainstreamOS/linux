@@ -25,6 +25,7 @@ enum intel_quirk_id {
 	QUIRK_DISABLE_PSR2,
 	QUIRK_ENABLE_DPCD_BACKLIGHT,
 	QUIRK_PANEL_REPLAY_EXIT_ON_FLUSH,
+	QUIRK_DISABLE_PSR,
 };
 
 void intel_init_quirks(struct intel_display *display);

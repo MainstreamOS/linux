@@ -16,6 +16,7 @@
 struct usbio_gpio_bank {
 	u8 config[USBIO_GPIOSPERBANK];
 	u32 bitmap;
+	unsigned long value;
 };
 
 struct usbio_gpio {
@@ -53,6 +54,34 @@ static void usbio_gpio_get_bank_and_pin(struct gpio_chip *gc, unsigned int offse
 
 	*bank_ret = bank;
 	*pin_ret = pin;
+}
+
+static int usbio_gpio_write_config(struct usbio_gpio *gpio, unsigned int bankid,
+				   unsigned int pin, u8 config, int timeout)
+{
+	struct usbio_gpio_init gbuf;
+
+	gbuf.bankid = bankid;
+	gbuf.config = config;
+	gbuf.pincount = 1;
+	gbuf.pin = pin;
+
+	return usbio_control_msg_timeout(gpio->adev, USBIO_PKTTYPE_GPIO, USBIO_GPIOCMD_INIT,
+					 &gbuf, sizeof(gbuf), NULL, 0, timeout);
+}
+
+static int usbio_gpio_write_value(struct usbio_gpio *gpio, unsigned int bankid,
+				  unsigned int pin, int value, int timeout)
+{
+	struct usbio_gpio_rw gbuf;
+
+	gbuf.bankid = bankid;
+	gbuf.pincount = 1;
+	gbuf.pin = pin;
+	gbuf.value = cpu_to_le32(value << pin);
+
+	return usbio_control_msg_timeout(gpio->adev, USBIO_PKTTYPE_GPIO, USBIO_GPIOCMD_WRITE,
+					 &gbuf, sizeof(gbuf), NULL, 0, timeout);
 }
 
 static int usbio_gpio_get_direction(struct gpio_chip *gc, unsigned int offset)
@@ -96,18 +125,14 @@ static int usbio_gpio_set(struct gpio_chip *gc, unsigned int offset, int value)
 {
 	struct usbio_gpio *gpio = gpiochip_get_data(gc);
 	struct usbio_gpio_bank *bank;
-	struct usbio_gpio_rw gbuf;
 	unsigned int pin;
 
 	usbio_gpio_get_bank_and_pin(gc, offset, &bank, &pin);
 
-	gbuf.bankid = offset / USBIO_GPIOSPERBANK;
-	gbuf.pincount  = 1;
-	gbuf.pin = pin;
-	gbuf.value = cpu_to_le32(value << pin);
+	assign_bit(pin, &bank->value, value);
 
-	return usbio_control_msg(gpio->adev, USBIO_PKTTYPE_GPIO, USBIO_GPIOCMD_WRITE,
-				 &gbuf, sizeof(gbuf), NULL, 0);
+	return usbio_gpio_write_value(gpio, offset / USBIO_GPIOSPERBANK, pin, value,
+				      USBIO_CTRLXFER_TIMEOUT);
 }
 
 static int usbio_gpio_update_config(struct gpio_chip *gc, unsigned int offset,
@@ -115,7 +140,6 @@ static int usbio_gpio_update_config(struct gpio_chip *gc, unsigned int offset,
 {
 	struct usbio_gpio *gpio = gpiochip_get_data(gc);
 	struct usbio_gpio_bank *bank;
-	struct usbio_gpio_init gbuf;
 	unsigned int pin;
 
 	usbio_gpio_get_bank_and_pin(gc, offset, &bank, &pin);
@@ -125,13 +149,8 @@ static int usbio_gpio_update_config(struct gpio_chip *gc, unsigned int offset,
 	bank->config[pin] &= ~mask;
 	bank->config[pin] |= value;
 
-	gbuf.bankid = offset / USBIO_GPIOSPERBANK;
-	gbuf.config = bank->config[pin];
-	gbuf.pincount  = 1;
-	gbuf.pin = pin;
-
-	return usbio_control_msg(gpio->adev, USBIO_PKTTYPE_GPIO, USBIO_GPIOCMD_INIT,
-				 &gbuf, sizeof(gbuf), NULL, 0);
+	return usbio_gpio_write_config(gpio, offset / USBIO_GPIOSPERBANK, pin,
+				       bank->config[pin], USBIO_CTRLXFER_TIMEOUT);
 }
 
 static int usbio_gpio_direction_input(struct gpio_chip *gc, unsigned int offset)
@@ -199,6 +218,7 @@ static int usbio_gpio_probe(struct auxiliary_device *adev,
 		return ret;
 
 	gpio->adev = adev;
+	dev_set_drvdata(dev, gpio);
 
 	usbio_acpi_bind(gpio->adev, usbio_gpio_acpi_hids);
 
@@ -229,6 +249,49 @@ static int usbio_gpio_probe(struct auxiliary_device *adev,
 	return 0;
 }
 
+static int usbio_gpio_resume(struct device *dev)
+{
+	struct usbio_gpio *gpio = dev_get_drvdata(dev);
+	unsigned int bankid, pin;
+	u8 config;
+	int ret;
+
+	if (!(usbio_get_quirks(gpio->adev) & USBIO_QUIRK_RESET_RESUME))
+		return 0;
+
+	guard(mutex)(&gpio->config_mutex);
+
+	for (bankid = 0; bankid < USBIO_MAX_GPIOBANKS; bankid++) {
+		for (pin = 0; pin < USBIO_GPIOSPERBANK; pin++) {
+			config = gpio->banks[bankid].config[pin];
+			if (!(config & USBIO_GPIO_PINMOD_MASK))
+				continue;
+
+			ret = usbio_gpio_write_config(gpio, bankid, pin, config,
+						      USBIO_RESUME_CTRLXFER_TIMEOUT);
+			if (ret)
+				goto rebind;
+
+			if ((config & USBIO_GPIO_PINMOD_MASK) != USBIO_GPIO_PINMOD_OUTPUT)
+				continue;
+
+			ret = usbio_gpio_write_value(gpio, bankid, pin,
+						     test_bit(pin, &gpio->banks[bankid].value),
+						     USBIO_RESUME_CTRLXFER_TIMEOUT);
+			if (ret)
+				goto rebind;
+		}
+	}
+
+	return 0;
+
+rebind:
+	usbio_request_rebind(gpio->adev);
+	return ret;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(usbio_gpio_pm_ops, NULL, usbio_gpio_resume);
+
 static const struct auxiliary_device_id usbio_gpio_id_table[] = {
 	{ "usbio.usbio-gpio" },
 	{ }
@@ -238,7 +301,10 @@ MODULE_DEVICE_TABLE(auxiliary, usbio_gpio_id_table);
 static struct auxiliary_driver usbio_gpio_driver = {
 	.name = USBIO_GPIO_CLIENT,
 	.probe = usbio_gpio_probe,
-	.id_table = usbio_gpio_id_table
+	.id_table = usbio_gpio_id_table,
+	.driver = {
+		.pm = pm_sleep_ptr(&usbio_gpio_pm_ops),
+	},
 };
 module_auxiliary_driver(usbio_gpio_driver);
 

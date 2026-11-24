@@ -22,6 +22,7 @@
  * USBIO quirks *
  ****************/
 #define USBIO_QUIRK_BULK_MAXP_63	BIT(0)  /* Force bulk endpoint maxp to 63 */
+#define USBIO_QUIRK_RESET_RESUME	BIT(1)
 #define USBIO_QUIRK_I2C_NO_INIT_ACK	BIT(8)  /* Do not ask for ack on I2C init */
 #define USBIO_QUIRK_I2C_MAX_RW_LEN_52	BIT(9)  /* Set i2c-adapter max r/w len to 52 */
 #define USBIO_QUIRK_I2C_USE_CHUNK_LEN	BIT(10) /* Send chunk-len for split xfers */
@@ -162,8 +163,14 @@ struct usbio_i2c_rw {
 	u8 data[] __counted_by(size);
 } __packed;
 
+#define USBIO_CTRLXFER_TIMEOUT		0
+#define USBIO_RESUME_CTRLXFER_TIMEOUT	1000
+
 int usbio_control_msg(struct auxiliary_device *adev, u8 type, u8 cmd,
 		      const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len);
+int usbio_control_msg_timeout(struct auxiliary_device *adev, u8 type, u8 cmd,
+			      const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len,
+			      int timeout);
 
 int usbio_bulk_msg(struct auxiliary_device *adev, u8 type, u8 cmd, bool last,
 		   const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len);
@@ -172,6 +179,7 @@ int usbio_acquire(struct auxiliary_device *adev);
 void usbio_release(struct auxiliary_device *adev);
 void usbio_get_txrxbuf_len(struct auxiliary_device *adev, u16 *txbuf_len, u16 *rxbuf_len);
 unsigned long usbio_get_quirks(struct auxiliary_device *adev);
+void usbio_request_rebind(struct auxiliary_device *adev);
 void usbio_acpi_bind(struct auxiliary_device *adev, const struct acpi_device_id *hids);
 
 #endif

@@ -39,7 +39,6 @@
 
 #define USBIO_PKTFLAGS_REQRESP	(USBIO_PKTFLAG_CMP | USBIO_PKTFLAG_ACK)
 
-#define USBIO_CTRLXFER_TIMEOUT 0
 #define USBIO_BULKXFER_TIMEOUT 100
 
 struct usbio_protver {
@@ -135,7 +134,8 @@ struct usbio_client {
 #define adev_to_client(adev) container_of_const(adev, struct usbio_client, auxdev)
 
 static int usbio_ctrl_msg(struct usbio_device *usbio, u8 type, u8 cmd,
-			  const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len)
+			  const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len,
+			  int timeout)
 {
 	u8 request = USB_TYPE_VENDOR | USB_RECIP_DEVICE;
 	struct usbio_ctrl_packet *cpkt;
@@ -165,7 +165,7 @@ static int usbio_ctrl_msg(struct usbio_device *usbio, u8 type, u8 cmd,
 	pipe = usb_sndctrlpipe(usbio->udev, usbio->ctrl_pipe);
 	cpkt_len = sizeof(*cpkt) + obuf_len;
 	ret = usb_control_msg(usbio->udev, pipe, 0, request | USB_DIR_OUT, 0, 0,
-			      cpkt, cpkt_len, USBIO_CTRLXFER_TIMEOUT);
+			      cpkt, cpkt_len, timeout);
 	dev_dbg(usbio->dev, "control out %d hdr %*phN data %*phN\n", ret,
 		(int)sizeof(*cpkt), cpkt, (int)cpkt->len, cpkt->data);
 
@@ -180,7 +180,7 @@ static int usbio_ctrl_msg(struct usbio_device *usbio, u8 type, u8 cmd,
 	pipe = usb_rcvctrlpipe(usbio->udev, usbio->ctrl_pipe);
 	cpkt_len = sizeof(*cpkt) + ibuf_len;
 	ret = usb_control_msg(usbio->udev, pipe, 0, request | USB_DIR_IN, 0, 0,
-			      cpkt, cpkt_len, USBIO_CTRLXFER_TIMEOUT);
+			      cpkt, cpkt_len, timeout);
 	dev_dbg(usbio->dev, "control in %d hdr %*phN data %*phN\n", ret,
 		(int)sizeof(*cpkt), cpkt, (int)cpkt->len, cpkt->data);
 
@@ -207,8 +207,9 @@ static int usbio_ctrl_msg(struct usbio_device *usbio, u8 type, u8 cmd,
 	return cpkt->len;
 }
 
-int usbio_control_msg(struct auxiliary_device *adev, u8 type, u8 cmd,
-		      const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len)
+int usbio_control_msg_timeout(struct auxiliary_device *adev, u8 type, u8 cmd,
+			      const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len,
+			      int timeout)
 {
 	struct usbio_client *client = adev_to_client(adev);
 	struct usbio_device *usbio;
@@ -226,12 +227,21 @@ int usbio_control_msg(struct auxiliary_device *adev, u8 type, u8 cmd,
 
 	mutex_lock(&usbio->ctrl_mutex);
 
-	ret = usbio_ctrl_msg(client->bridge, type, cmd, obuf, obuf_len, ibuf, ibuf_len);
+	ret = usbio_ctrl_msg(client->bridge, type, cmd, obuf, obuf_len, ibuf, ibuf_len,
+			     timeout);
 
 	mutex_unlock(&usbio->ctrl_mutex);
 	usb_autopm_put_interface(usbio->intf);
 
 	return ret;
+}
+EXPORT_SYMBOL_NS_GPL(usbio_control_msg_timeout, "USBIO");
+
+int usbio_control_msg(struct auxiliary_device *adev, u8 type, u8 cmd,
+		      const void *obuf, u16 obuf_len, void *ibuf, u16 ibuf_len)
+{
+	return usbio_control_msg_timeout(adev, type, cmd, obuf, obuf_len, ibuf, ibuf_len,
+					 USBIO_CTRLXFER_TIMEOUT);
 }
 EXPORT_SYMBOL_NS_GPL(usbio_control_msg, "USBIO");
 
@@ -428,6 +438,17 @@ unsigned long usbio_get_quirks(struct auxiliary_device *adev)
 }
 EXPORT_SYMBOL_NS_GPL(usbio_get_quirks, "USBIO");
 
+void usbio_request_rebind(struct auxiliary_device *adev)
+{
+	struct usbio_client *client = adev_to_client(adev);
+
+	guard(mutex)(&client->mutex);
+
+	if (client->bridge)
+		client->bridge->intf->needs_binding = 1;
+}
+EXPORT_SYMBOL_NS_GPL(usbio_request_rebind, "USBIO");
+
 static void usbio_auxdev_release(struct device *dev)
 {
 	struct auxiliary_device *adev = to_auxiliary_dev(dev);
@@ -503,6 +524,50 @@ static int usbio_enum_i2cs(struct usbio_device *usbio)
 	return 0;
 }
 
+static int usbio_bridge_init(struct usbio_device *usbio, int timeout,
+			     struct usbio_gpio_bank_desc *gpios, unsigned int *nr_gpio_banks,
+			     struct usbio_i2c_bus_desc *i2cs, unsigned int *nr_i2c_buses)
+{
+	struct usbio_protver protver;
+	struct usbio_fwver fwver;
+	int ret;
+
+	guard(mutex)(&usbio->ctrl_mutex);
+
+	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_HS, NULL, 0, NULL, 0,
+			     timeout);
+	if (ret < 0)
+		return ret;
+
+	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_PROTVER, NULL, 0,
+			     &protver, sizeof(protver), timeout);
+	if (ret < 0)
+		return ret;
+
+	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_FWVER, NULL, 0,
+			     &fwver, sizeof(fwver), timeout);
+	if (ret < 0)
+		return ret;
+
+	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_ENUMGPIO, NULL, 0,
+			     gpios, sizeof(usbio->gpios), timeout);
+	if (ret < 0 || ret % sizeof(struct usbio_gpio_bank_desc))
+		return (ret < 0) ? ret : -EPROTO;
+	*nr_gpio_banks = ret / sizeof(struct usbio_gpio_bank_desc);
+
+	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_ENUMI2C, NULL, 0,
+			     i2cs, sizeof(usbio->i2cs), timeout);
+	if (ret < 0 || ret % sizeof(struct usbio_i2c_bus_desc))
+		return (ret < 0) ? ret : -EPROTO;
+	*nr_i2c_buses = ret / sizeof(struct usbio_i2c_bus_desc);
+
+	dev_dbg(usbio->dev, "ProtVer(BCD): %02x FwVer: %d.%d.%d.%d\n",
+		protver.ver, fwver.major, fwver.minor,
+		le16_to_cpu(fwver.patch), le16_to_cpu(fwver.build));
+
+	return 0;
+}
+
 static int usbio_suspend(struct usb_interface *intf, pm_message_t msg)
 {
 	struct usbio_device *usbio = usb_get_intfdata(intf);
@@ -517,6 +582,38 @@ static int usbio_resume(struct usb_interface *intf)
 	struct usbio_device *usbio = usb_get_intfdata(intf);
 
 	return usb_submit_urb(usbio->urb, GFP_KERNEL);
+}
+
+static int usbio_reset_resume(struct usb_interface *intf)
+{
+	struct usbio_device *usbio = usb_get_intfdata(intf);
+	struct usbio_gpio_bank_desc gpios[USBIO_MAX_GPIOBANKS] = {};
+	struct usbio_i2c_bus_desc i2cs[USBIO_MAX_I2CBUSES] = {};
+	unsigned int nr_gpio_banks, nr_i2c_buses;
+	int ret;
+
+	if (!(usbio->quirks & USBIO_QUIRK_RESET_RESUME))
+		goto rebind;
+
+	ret = usb_submit_urb(usbio->urb, GFP_KERNEL);
+	if (ret)
+		goto rebind;
+
+	ret = usbio_bridge_init(usbio, USBIO_RESUME_CTRLXFER_TIMEOUT, gpios, &nr_gpio_banks,
+				i2cs, &nr_i2c_buses);
+	if (ret || nr_gpio_banks != usbio->nr_gpio_banks ||
+	    nr_i2c_buses != usbio->nr_i2c_buses ||
+	    memcmp(gpios, usbio->gpios, sizeof(gpios)) ||
+	    memcmp(i2cs, usbio->i2cs, sizeof(i2cs))) {
+		usb_kill_urb(usbio->urb);
+		goto rebind;
+	}
+
+	return 0;
+
+rebind:
+	intf->needs_binding = 1;
+	return 0;
 }
 
 static void usbio_disconnect(struct usb_interface *intf)
@@ -550,9 +647,7 @@ static int usbio_probe(struct usb_interface *intf, const struct usb_device_id *i
 	struct usb_device *udev = interface_to_usbdev(intf);
 	struct usb_endpoint_descriptor *ep_in, *ep_out;
 	struct device *dev = &intf->dev;
-	struct usbio_protver protver;
 	struct usbio_device *usbio;
-	struct usbio_fwver fwver;
 	int ret;
 
 	usbio = devm_kzalloc(dev, sizeof(*usbio), GFP_KERNEL);
@@ -623,51 +718,17 @@ static int usbio_probe(struct usb_interface *intf, const struct usb_device_id *i
 		goto err_free_urb;
 	}
 
-	mutex_lock(&usbio->ctrl_mutex);
-
-	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_HS, NULL, 0, NULL, 0);
-	if (ret < 0)
-		goto err_unlock;
-
-	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_PROTVER, NULL, 0,
-			     &protver, sizeof(protver));
-	if (ret < 0)
-		goto err_unlock;
-
-	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_FWVER, NULL, 0,
-			     &fwver, sizeof(fwver));
-	if (ret < 0)
-		goto err_unlock;
-
-	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_ENUMGPIO, NULL, 0,
-			     usbio->gpios, sizeof(usbio->gpios));
-	if (ret < 0 || ret % sizeof(struct usbio_gpio_bank_desc)) {
-		ret = (ret < 0) ? ret : -EPROTO;
-		goto err_unlock;
-	}
-	usbio->nr_gpio_banks = ret / sizeof(struct usbio_gpio_bank_desc);
-
-	ret = usbio_ctrl_msg(usbio, USBIO_PKTTYPE_CTRL, USBIO_CTRLCMD_ENUMI2C, NULL, 0,
-			     usbio->i2cs, sizeof(usbio->i2cs));
-	if (ret < 0 || ret % sizeof(struct usbio_i2c_bus_desc)) {
-		ret = (ret < 0) ? ret : -EPROTO;
-		goto err_unlock;
-	}
-	usbio->nr_i2c_buses = ret / sizeof(struct usbio_i2c_bus_desc);
-
-	mutex_unlock(&usbio->ctrl_mutex);
-
-	dev_dbg(dev, "ProtVer(BCD): %02x FwVer: %d.%d.%d.%d\n",
-		protver.ver, fwver.major, fwver.minor,
-		le16_to_cpu(fwver.patch), le16_to_cpu(fwver.build));
+	ret = usbio_bridge_init(usbio, USBIO_CTRLXFER_TIMEOUT, usbio->gpios,
+				&usbio->nr_gpio_banks, usbio->i2cs, &usbio->nr_i2c_buses);
+	if (ret)
+		goto err_kill_urb;
 
 	usbio_enum_gpios(usbio);
 	usbio_enum_i2cs(usbio);
 
 	return 0;
 
-err_unlock:
-	mutex_unlock(&usbio->ctrl_mutex);
+err_kill_urb:
 	usb_kill_urb(usbio->urb);
 err_free_urb:
 	usb_free_urb(usbio->urb);
@@ -683,7 +744,8 @@ static const struct usb_device_id usbio_table[] = {
 			 USBIO_QUIRK_I2C_ALLOW_400KHZ },
 	{ USB_DEVICE(0x2ac1, 0x20cb) },	/* Lattice NX33U */
 	{ USB_DEVICE(0x06cb, 0x0701),	/* Synaptics Sabre */
-	  .driver_info = USBIO_QUIRK_BULK_MAXP_63 | USBIO_QUIRK_I2C_USE_CHUNK_LEN },
+	  .driver_info = USBIO_QUIRK_BULK_MAXP_63 | USBIO_QUIRK_I2C_USE_CHUNK_LEN |
+			 USBIO_QUIRK_RESET_RESUME },
 	{ }
 };
 MODULE_DEVICE_TABLE(usb, usbio_table);
@@ -694,6 +756,7 @@ static struct usb_driver usbio_driver = {
 	.disconnect = usbio_disconnect,
 	.suspend = usbio_suspend,
 	.resume = usbio_resume,
+	.reset_resume = usbio_reset_resume,
 	.id_table = usbio_table,
 	.supports_autosuspend = 1,
 };

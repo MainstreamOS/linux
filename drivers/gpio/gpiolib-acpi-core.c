@@ -1035,6 +1035,7 @@ int acpi_dev_gpio_irq_wake_get_by(struct acpi_device *adev, const char *con_id, 
 		if (info.gpioint && idx++ == index) {
 			unsigned long lflags = GPIO_LOOKUP_FLAGS_DEFAULT;
 			enum gpiod_flags dflags = GPIOD_ASIS;
+			struct device *parent;
 			char label[32];
 			int irq;
 
@@ -1047,6 +1048,15 @@ int acpi_dev_gpio_irq_wake_get_by(struct acpi_device *adev, const char *con_id, 
 
 			acpi_gpio_update_gpiod_flags(&dflags, &info);
 			acpi_gpio_update_gpiod_lookup_flags(&lflags, &info);
+
+			parent = desc->gdev->dev.parent;
+			if ((lflags & GPIO_ACTIVE_LOW) && parent &&
+			    acpi_gpio_in_ignore_list(ACPI_GPIO_IGNORE_IRQ_ACTIVE_LOW,
+						     dev_name(parent), gpiod_hwgpio(desc))) {
+				dev_info(parent, "Ignoring active-low on pin %d\n",
+					 gpiod_hwgpio(desc));
+				lflags &= ~GPIO_ACTIVE_LOW;
+			}
 
 			snprintf(label, sizeof(label), "%pfwP GpioInt(%d)", fwnode, index);
 			ret = gpiod_set_consumer_name(desc, con_id ?: label);

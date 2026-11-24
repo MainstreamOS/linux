@@ -68,6 +68,7 @@ int acpi_gpio_need_run_edge_events_on_boot(void);
 enum acpi_gpio_ignore_list {
 	ACPI_GPIO_IGNORE_WAKE,
 	ACPI_GPIO_IGNORE_INTERRUPT,
+	ACPI_GPIO_IGNORE_IRQ_ACTIVE_LOW,
 };
 
 bool acpi_gpio_in_ignore_list(enum acpi_gpio_ignore_list list,

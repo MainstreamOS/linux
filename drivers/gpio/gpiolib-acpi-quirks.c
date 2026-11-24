@@ -33,6 +33,11 @@ MODULE_PARM_DESC(ignore_interrupt,
 		 "controller@pin combos on which to ignore interrupt "
 		 "ignore_interrupt=controller@pin[,controller@pin[,...]]");
 
+static char *ignore_irq_active_low;
+module_param(ignore_irq_active_low, charp, 0444);
+MODULE_PARM_DESC(ignore_irq_active_low,
+		 "controller@pin[,controller@pin[,...]] on which to ignore GpioInt active-low");
+
 /*
  * For GPIO chips which call acpi_gpiochip_request_interrupts() before late_init
  * (so builtin drivers) we register the ACPI GpioInt IRQ handlers from a
@@ -85,6 +90,9 @@ bool acpi_gpio_in_ignore_list(enum acpi_gpio_ignore_list list,
 	case ACPI_GPIO_IGNORE_INTERRUPT:
 		ignore_list = ignore_interrupt;
 		break;
+	case ACPI_GPIO_IGNORE_IRQ_ACTIVE_LOW:
+		ignore_list = ignore_irq_active_low;
+		break;
 	default:
 		return false;
 	}
@@ -134,6 +142,7 @@ struct acpi_gpiolib_dmi_quirk {
 	bool no_edge_events_on_boot;
 	char *ignore_wake;
 	char *ignore_interrupt;
+	char *ignore_irq_active_low;
 };
 
 static const struct dmi_system_id gpiolib_acpi_quirks[] __initconst = {
@@ -392,6 +401,24 @@ static const struct dmi_system_id gpiolib_acpi_quirks[] __initconst = {
 			.ignore_wake = "VEN_0488:00@355",
 		},
 	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "XPS 14 DA14260"),
+		},
+		.driver_data = &(struct acpi_gpiolib_dmi_quirk) {
+			.ignore_irq_active_low = "INTC10BC:01@20",
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "XPS 16 DA16260"),
+		},
+		.driver_data = &(struct acpi_gpiolib_dmi_quirk) {
+			.ignore_irq_active_low = "INTC10BC:01@20",
+		},
+	},
 	{} /* Terminating entry */
 };
 
@@ -416,6 +443,9 @@ static int __init acpi_gpio_setup_params(void)
 
 	if (ignore_interrupt == NULL && quirk && quirk->ignore_interrupt)
 		ignore_interrupt = quirk->ignore_interrupt;
+
+	if (!ignore_irq_active_low && quirk && quirk->ignore_irq_active_low)
+		ignore_irq_active_low = quirk->ignore_irq_active_low;
 
 	return 0;
 }

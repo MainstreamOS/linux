@@ -293,6 +293,9 @@ static struct intel_quirk intel_quirks[] = {
 
 	/* Dell XPS 13 DX13260 */
 	{ DEVICE_ID_ANY, 0x1028, 0x0e54, quirk_disable_psr2 },
+
+	/* HP OmniBook Ultra 14 */
+	{ DEVICE_ID_ANY, 0x103c, 0x8eb4, quirk_disable_psr2 },
 };
 
 static const struct intel_dpcd_quirk intel_dpcd_quirks[] = {
@@ -336,6 +339,14 @@ static const struct intel_dpcd_quirk intel_dpcd_quirks[] = {
 		.sink_oui = SINK_OUI(0x00, 0x22, 0xb9),
 		.sink_device_id = SINK_DEVICE_ID(0x42, 0x61, 0x6d, 0x62, 0x6f, 0x6f),
 		.hook = quirk_disable_psr_and_panel_replay,
+	},
+	/* HP OmniBook Ultra 14 */
+	{
+		.device = DEVICE_ID_ANY,
+		.subsystem_vendor = 0x103c,
+		.subsystem_device = 0x8eb4,
+		.sink_oui = SINK_OUI(0x00, 0x12, 0xfb),
+		.hook = quirk_disable_edp_panel_replay,
 	},
 	/* TUXEDO InsanityBook 15 v1 */
 	{

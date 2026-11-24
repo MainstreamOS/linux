@@ -390,6 +390,14 @@ static int __magicmouse_raw_event(struct hid_device *hdev,
 	struct input_dev *input = msc->input;
 	int x = 0, y = 0, ii, clicks = 0, npoints;
 
+	/*
+	 * This driver also binds interfaces that hid-input does not create an
+	 * input device for, so msc->input can legitimately be NULL here. Leave
+	 * their reports to the generic HID paths instead of dereferencing it.
+	 */
+	if (!input)
+		return 0;
+
 	/* Protect against zero sized recursive calls from DOUBLE_REPORT_ID */
 	if (size < 1)
 		return 0;

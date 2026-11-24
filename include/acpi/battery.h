@@ -32,4 +32,21 @@ void acpi_battery_add_hooks(struct acpi_battery_hooks_list_entry *entry,
 			    struct power_supply *battery);
 void acpi_battery_remove_hooks(struct acpi_battery_hooks_list_entry *entry);
 
+/* Mainline names, kept so out-of-tree modules built for mainline still compile. */
+static inline void battery_hook_register(struct acpi_battery_hook *hook)
+{
+	acpi_battery_hook_register(hook);
+}
+
+static inline void battery_hook_unregister(struct acpi_battery_hook *hook)
+{
+	acpi_battery_hook_unregister(hook);
+}
+
+static inline int devm_battery_hook_register(struct device *dev,
+					     struct acpi_battery_hook *hook)
+{
+	return devm_acpi_battery_hook_register(dev, hook);
+}
+
 #endif

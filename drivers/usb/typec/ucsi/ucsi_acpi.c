@@ -207,6 +207,22 @@ static const struct dmi_system_id ucsi_acpi_quirks[] = {
 	{ }
 };
 
+static const struct dmi_system_id ucsi_acpi_early_cci_poll[] = {
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "XPS 14 DA14260"),
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "XPS 16 DA16260"),
+		},
+	},
+	{ }
+};
+
 static void ucsi_acpi_notify(acpi_handle handle, u32 event, void *data)
 {
 	struct ucsi_acpi *ua = data;
@@ -262,6 +278,9 @@ static int ucsi_acpi_probe(struct platform_device *pdev)
 		return PTR_ERR(ua->ucsi);
 
 	ucsi_set_drvdata(ua->ucsi, ua);
+
+	if (dmi_check_system(ucsi_acpi_early_cci_poll))
+		ua->ucsi->quirks |= UCSI_EARLY_CCI_POLL;
 
 	status = acpi_install_notify_handler(ACPI_HANDLE(&pdev->dev),
 					     ACPI_DEVICE_NOTIFY,

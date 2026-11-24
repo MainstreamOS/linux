@@ -510,6 +510,7 @@ struct ucsi {
 
 /* USB4 connection can imply that USB communcation is supported */
 #define UCSI_USB4_IMPLIES_USB	BIT(2)
+#define UCSI_EARLY_CCI_POLL	BIT(3)
 };
 
 #define UCSI_MAX_DATA_LENGTH(u) (((u)->version < UCSI_VERSION_2_0) ? 0x10 : 0xff)

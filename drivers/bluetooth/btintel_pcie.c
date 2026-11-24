@@ -312,11 +312,13 @@ static inline void btintel_pcie_dump_debug_registers(struct hci_dev *hdev)
 	bt_dev_dbg(hdev, "%s", buf);
 	skb_put_data(skb, buf, strlen(buf));
 
+	spin_lock(&data->irq_lock);
 	reg = btintel_pcie_rd_reg32(data, BTINTEL_PCIE_CSR_BOOT_STAGE_REG);
+	data->boot_stage_cache = reg;
+	spin_unlock(&data->irq_lock);
 	snprintf(buf, sizeof(buf), "boot stage: 0x%8.8x", reg);
 	bt_dev_dbg(hdev, "%s", buf);
 	skb_put_data(skb, buf, strlen(buf));
-	data->boot_stage_cache = reg;
 
 	if (reg & BTINTEL_PCIE_CSR_BOOT_STAGE_DEVICE_WARNING)
 		bt_dev_warn(hdev, "Controller device warning (boot_stage: 0x%8.8x)", reg);
@@ -859,7 +861,9 @@ static int btintel_pcie_enable_bt(struct btintel_pcie_data *data)
 	/* Reset the cached value of boot stage. it is updated by the MSI-X
 	 * gp0 interrupt handler.
 	 */
+	spin_lock(&data->irq_lock);
 	data->boot_stage_cache = 0x0;
+	spin_unlock(&data->irq_lock);
 
 	/* Set MAC_INIT bit to start primary bootloader */
 	reg = btintel_pcie_rd_reg32(data, BTINTEL_PCIE_CSR_FUNC_CTRL_REG);
@@ -982,9 +986,11 @@ static void btintel_pcie_msix_gp0_handler(struct btintel_pcie_data *data)
 	 * know what causes the interrupt. So, it compares each register value
 	 * with cached value and update it before it wake up the queue.
 	 */
+	spin_lock(&data->irq_lock);
 	reg = btintel_pcie_rd_reg32(data, BTINTEL_PCIE_CSR_BOOT_STAGE_REG);
 	if (reg != data->boot_stage_cache)
 		data->boot_stage_cache = reg;
+	spin_unlock(&data->irq_lock);
 
 	bt_dev_dbg(data->hdev, "Alive context: %s old_boot_stage: 0x%8.8x new_boot_stage: 0x%8.8x",
 		   btintel_pcie_alivectxt_state2str(data->alive_intr_ctxt),
@@ -1016,6 +1022,8 @@ static void btintel_pcie_msix_gp0_handler(struct btintel_pcie_data *data)
 	 * register-based fallback, which can run concurrently.
 	 */
 	spin_lock(&data->irq_lock);
+	data->boot_stage_cache = btintel_pcie_rd_reg32(data,
+						       BTINTEL_PCIE_CSR_BOOT_STAGE_REG);
 	switch (data->alive_intr_ctxt) {
 	case BTINTEL_PCIE_ROM:
 		data->alive_intr_ctxt = BTINTEL_PCIE_FW_DL;
@@ -1071,12 +1079,12 @@ static void btintel_pcie_msix_gp0_handler(struct btintel_pcie_data *data)
 			   data->alive_intr_ctxt);
 		break;
 	}
-	spin_unlock(&data->irq_lock);
 
 	if (submit_rx) {
 		btintel_pcie_reset_ia(data);
 		btintel_pcie_start_rx(data);
 	}
+	spin_unlock(&data->irq_lock);
 
 	if (signal_waitq) {
 		bt_dev_dbg(data->hdev, "wake up gp0 wait_q");
@@ -3222,40 +3230,34 @@ static int btintel_pcie_set_dxstate(struct btintel_pcie_data *data, u32 dxstate)
 		 * knows. Refresh the cache here and retry only if the state check still
 		 * fails.
 		 */
+		spin_lock(&data->irq_lock);
 		data->boot_stage_cache = btintel_pcie_rd_reg32(data,
 							       BTINTEL_PCIE_CSR_BOOT_STAGE_REG);
 		if (dxstate == BTINTEL_PCIE_STATE_D0) {
 			if (btintel_pcie_in_d0(data)) {
-				bool armed;
+				err = 0;
 
 				/* Claim the transition under irq_lock so a
 				 * concurrent gp0 handler run cannot also arm RX.
 				 */
-				spin_lock(&data->irq_lock);
-				armed = data->alive_intr_ctxt == BTINTEL_PCIE_D0;
-				if (!armed)
+				if (data->alive_intr_ctxt != BTINTEL_PCIE_D0) {
 					data->alive_intr_ctxt = BTINTEL_PCIE_D0;
+
+					/* Do what the handler's D3 -> D0 branch
+					 * would have done, unless it already has.
+					 */
+					btintel_pcie_reset_ia(data);
+					err = btintel_pcie_start_rx(data);
+				}
 				spin_unlock(&data->irq_lock);
 
-				if (armed)
-					return 0;
-
-				/* Do what the handler's D3 -> D0 branch
-				 * would have done, unless it already has.
-				 */
-				btintel_pcie_reset_ia(data);
-				err = btintel_pcie_start_rx(data);
-				if (err)
-					return err;
-
-				return 0;
+				return err;
 			}
 		} else {
 			if (btintel_pcie_in_d3(data)) {
 				/* Do what the handler's D0 -> D3 branch
 				 * would have done, unless it already has.
 				 */
-				spin_lock(&data->irq_lock);
 				if (data->alive_intr_ctxt != BTINTEL_PCIE_D3)
 					data->alive_intr_ctxt = BTINTEL_PCIE_D3;
 				spin_unlock(&data->irq_lock);
@@ -3263,6 +3265,7 @@ static int btintel_pcie_set_dxstate(struct btintel_pcie_data *data, u32 dxstate)
 				return 0;
 			}
 		}
+		spin_unlock(&data->irq_lock);
 
 	} while (++retry < BTINTEL_PCIE_DX_TRANSITION_MAX_RETRIES);
 
@@ -3357,8 +3360,10 @@ static int btintel_pcie_resume_event(struct device *dev, pm_message_t mesg)
 	 * operational mode
 	 */
 
+	spin_lock(&data->irq_lock);
 	data->boot_stage_cache = btintel_pcie_rd_reg32(data,
 			BTINTEL_PCIE_CSR_BOOT_STAGE_REG);
+	spin_unlock(&data->irq_lock);
 	if (btintel_pcie_in_error(data) ||
 			btintel_pcie_in_device_halt(data)) {
 		bt_dev_err(data->hdev, "Controller in error state for D0 entry");

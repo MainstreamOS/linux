@@ -3424,6 +3424,30 @@ bool xe_bo_is_xe_bo(struct ttm_buffer_object *bo)
 	return false;
 }
 
+void xe_bo_addr_iter_first(struct xe_bo *bo, struct xe_res_cursor *cur, u64 offset, u64 size)
+{
+	struct xe_device *xe = xe_bo_device(bo);
+
+	if (!xe_bo_is_vram(bo) && !xe_bo_is_stolen(bo)) {
+		xe_assert(xe, bo->ttm.ttm);
+
+		xe_res_first_sg(xe_bo_sg(bo), offset, size, cur);
+	} else {
+		xe_res_first(bo->ttm.resource, offset, size, cur);
+
+		xe_assert(xe, !cur->dma_addr);
+		cur->dma_start = vram_region_gpu_offset(bo->ttm.resource);
+	}
+}
+
+dma_addr_t xe_bo_addr_iter_addr(struct xe_res_cursor *cur)
+{
+	if (cur->mem_type == XE_PL_TT)
+		return xe_res_dma(cur);
+
+	return cur->start + cur->dma_start;
+}
+
 /*
  * Resolve a BO address. There is no assert to check if the proper lock is held
  * so it should only be used in cases where it is not fatal to get the wrong
@@ -3432,27 +3456,10 @@ bool xe_bo_is_xe_bo(struct ttm_buffer_object *bo)
  */
 dma_addr_t __xe_bo_addr(struct xe_bo *bo, u64 offset, size_t page_size)
 {
-	struct xe_device *xe = xe_bo_device(bo);
 	struct xe_res_cursor cur;
-	u64 page;
 
-	xe_assert(xe, page_size <= PAGE_SIZE);
-	page = offset >> PAGE_SHIFT;
-	offset &= (PAGE_SIZE - 1);
-
-	if (!xe_bo_is_vram(bo) && !xe_bo_is_stolen(bo)) {
-		xe_assert(xe, bo->ttm.ttm);
-
-		xe_res_first_sg(xe_bo_sg(bo), page << PAGE_SHIFT,
-				page_size, &cur);
-		return xe_res_dma(&cur) + offset;
-	} else {
-		struct xe_res_cursor cur;
-
-		xe_res_first(bo->ttm.resource, page << PAGE_SHIFT,
-			     page_size, &cur);
-		return cur.start + offset + vram_region_gpu_offset(bo->ttm.resource);
-	}
+	xe_bo_addr_iter_first(bo, &cur, offset, page_size);
+	return xe_bo_addr_iter_addr(&cur);
 }
 
 dma_addr_t xe_bo_addr(struct xe_bo *bo, u64 offset, size_t page_size)

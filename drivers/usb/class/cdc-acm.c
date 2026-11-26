@@ -34,6 +34,8 @@
 #include <linux/uaccess.h>
 #include <linux/usb.h>
 #include <linux/usb/cdc.h>
+#include <linux/acpi.h>
+#include <linux/auxiliary_bus.h>
 #include <asm/byteorder.h>
 #include <linux/unaligned.h>
 #include <linux/idr.h>
@@ -47,6 +49,77 @@
 
 static struct usb_driver acm_driver;
 static struct tty_driver *acm_tty_driver;
+
+struct acm_apple_bt_host {
+	struct auxiliary_device auxdev;
+};
+
+static void acm_apple_bt_host_release(struct device *dev)
+{
+	struct auxiliary_device *auxdev = to_auxiliary_dev(dev);
+	struct acm_apple_bt_host *host;
+
+	host = container_of(auxdev, struct acm_apple_bt_host, auxdev);
+	kfree(host);
+}
+
+static struct acpi_device *acm_apple_bt_acpi_uart(void)
+{
+	struct acpi_device *bluetooth;
+	struct acpi_device *uart;
+
+	bluetooth = acpi_dev_get_first_match_dev("BCM2E7C", "1", -1);
+	if (!bluetooth)
+		return NULL;
+
+	uart = acpi_dev_parent(bluetooth);
+	acpi_dev_put(bluetooth);
+
+	return uart;
+}
+
+static struct acm_apple_bt_host *
+acm_apple_bt_host_create(struct usb_interface *intf,
+			 struct acpi_device *uart, int id)
+{
+	struct acm_apple_bt_host *host;
+	int ret;
+
+	host = kzalloc_obj(*host);
+	if (!host)
+		return ERR_PTR(-ENOMEM);
+
+	host->auxdev.name = "apple-bt-uart";
+	host->auxdev.id = id;
+	host->auxdev.dev.parent = &intf->dev;
+	host->auxdev.dev.release = acm_apple_bt_host_release;
+
+	ret = auxiliary_device_init(&host->auxdev);
+	if (ret) {
+		kfree(host);
+		return ERR_PTR(ret);
+	}
+
+	ACPI_COMPANION_SET(&host->auxdev.dev, uart);
+
+	ret = auxiliary_device_add(&host->auxdev);
+	if (ret) {
+		auxiliary_device_uninit(&host->auxdev);
+		return ERR_PTR(ret);
+	}
+
+	return host;
+}
+
+static void acm_apple_bt_host_destroy(struct acm *acm)
+{
+	if (!acm->apple_bt_host)
+		return;
+
+	auxiliary_device_delete(&acm->apple_bt_host->auxdev);
+	auxiliary_device_uninit(&acm->apple_bt_host->auxdev);
+	acm->apple_bt_host = NULL;
+}
 
 static DEFINE_IDR(acm_minors);
 static DEFINE_MUTEX(acm_minors_lock);
@@ -1559,10 +1632,45 @@ skip_countries:
 		usb_clear_halt(usb_dev, acm->out);
 	}
 
-	tty_dev = tty_port_register_device(&acm->port, acm_tty_driver, minor,
-			&control_interface->dev);
+	if (usb_dev->descriptor.idVendor == cpu_to_le16(0x05ac) &&
+	    usb_dev->descriptor.idProduct == cpu_to_le16(0x8297)) {
+		struct acpi_device *uart;
+
+		uart = acm_apple_bt_acpi_uart();
+		if (uart) {
+			struct device *host_dev;
+
+			acm->apple_bt_host =
+				acm_apple_bt_host_create(control_interface, uart,
+							 minor);
+			if (IS_ERR(acm->apple_bt_host)) {
+				rv = PTR_ERR(acm->apple_bt_host);
+				acm->apple_bt_host = NULL;
+				goto err_release_data_interface;
+			}
+
+			host_dev = &acm->apple_bt_host->auxdev.dev;
+
+			tty_dev = tty_port_register_device_attr_serdev(&acm->port,
+								       acm_tty_driver,
+								       minor,
+								       host_dev,
+								       &control_interface->dev,
+								       NULL, NULL);
+		} else {
+			tty_dev = tty_port_register_device(&acm->port,
+							   acm_tty_driver,
+							  minor,
+							  &control_interface->dev);
+		}
+	} else {
+		tty_dev = tty_port_register_device(&acm->port,
+						   acm_tty_driver, minor,
+					  &control_interface->dev);
+	}
 	if (IS_ERR(tty_dev)) {
 		rv = PTR_ERR(tty_dev);
+		acm_apple_bt_host_destroy(acm);
 		goto err_release_data_interface;
 	}
 
@@ -1645,7 +1753,13 @@ static void acm_disconnect(struct usb_interface *intf)
 
 	cancel_delayed_work_sync(&acm->dwork);
 
-	tty_unregister_device(acm_tty_driver, acm->minor);
+	if (acm->apple_bt_host) {
+		tty_port_unregister_device(&acm->port, acm_tty_driver,
+					   acm->minor);
+		acm_apple_bt_host_destroy(acm);
+	} else {
+		tty_unregister_device(acm_tty_driver, acm->minor);
+	}
 
 	usb_free_urb(acm->ctrlurb);
 	for (i = 0; i < ACM_NW; i++)

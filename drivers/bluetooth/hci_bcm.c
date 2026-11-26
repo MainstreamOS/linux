@@ -1014,12 +1014,24 @@ static int bcm_apple_set_shutdown(struct bcm_device *dev, bool powered)
 static int bcm_apple_get_resources(struct bcm_device *dev)
 {
 	struct acpi_device *adev = ACPI_COMPANION(dev->dev);
+	acpi_handle control;
 	const union acpi_object *obj;
 
-	if (!adev ||
-	    ACPI_FAILURE(acpi_get_handle(adev->handle, "BTLP", &dev->btlp)) ||
-	    ACPI_FAILURE(acpi_get_handle(adev->handle, "BTPU", &dev->btpu)) ||
-	    ACPI_FAILURE(acpi_get_handle(adev->handle, "BTPD", &dev->btpd)))
+	if (!adev)
+		return -ENODEV;
+
+	if (dmi_match(DMI_PRODUCT_NAME, "MacPro7,1")) {
+		if (ACPI_FAILURE(acpi_get_handle(NULL,
+						 "\\_SB.PCI0.XHC1.BLTH",
+						 &control)))
+			return -ENODEV;
+	} else {
+		control = adev->handle;
+	}
+
+	if (ACPI_FAILURE(acpi_get_handle(control, "BTLP", &dev->btlp)) ||
+	    ACPI_FAILURE(acpi_get_handle(control, "BTPU", &dev->btpu)) ||
+	    ACPI_FAILURE(acpi_get_handle(control, "BTPD", &dev->btpd)))
 		return -ENODEV;
 
 	if (!acpi_dev_get_property(adev, "baud", ACPI_TYPE_BUFFER, &obj) &&

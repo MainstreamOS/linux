@@ -433,6 +433,12 @@ static const struct dmi_system_id disable_broken_read_transmit_power[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "iMac20,2"),
 		},
 	},
+	{
+		 .matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "Apple Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "MacPro7,1"),
+		},
+	},
 	{ }
 };
 

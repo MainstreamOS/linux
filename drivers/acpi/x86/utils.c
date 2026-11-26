@@ -70,6 +70,15 @@ struct override_status_id {
 
 static const struct override_status_id override_status_ids[] = {
 	/*
+	 * The MacPro7,1 firmware reports the BCM2E7C Bluetooth UART as
+	 * not present when running with the Darwin OSI.
+	 */
+	PRESENT_ENTRY_HID("BCM2E7C", "1", INTEL_SKYLAKE_X, {
+		DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
+		DMI_MATCH(DMI_PRODUCT_NAME, "MacPro7,1"),
+	      }),
+
+	/*
 	 * Bay / Cherry Trail PWM directly poked by GPU driver in win10,
 	 * but Linux uses a separate PWM driver, harmless if not used.
 	 */

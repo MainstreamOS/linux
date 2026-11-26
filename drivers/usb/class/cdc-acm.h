@@ -54,9 +54,12 @@ struct acm_rb {
 	struct acm		*instance;
 };
 
+struct acm_apple_bt_host;
+
 struct acm {
 	struct usb_device *dev;				/* the corresponding usb device */
 	struct usb_interface *control;			/* control interface */
+	struct acm_apple_bt_host *apple_bt_host;	/* Apple Bluetooth serdev host */
 	struct usb_interface *data;			/* data interface */
 	unsigned in, out;				/* i/o pipes */
 	struct tty_port port;			 	/* our tty port data */

@@ -571,6 +571,8 @@ static const struct hda_model_fixup cs4208_models[] = {
 
 static const struct hda_quirk cs4208_fixup_tbl[] = {
 	SND_PCI_QUIRK_VENDOR(0x106b, "Apple", CS4208_MAC_AUTO),
+	HDA_CODEC_QUIRK(0x106b, 0, "Apple", CS4208_MAC_AUTO),
+	SND_PCI_QUIRK(0x8086, 0x7270, "MacBookAir 7,2", CS4208_MBA6),
 	{} /* terminator */
 };
 

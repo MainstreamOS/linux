@@ -620,14 +620,6 @@ static int __magicmouse_raw_event_usb(struct hid_device *hdev,
 	struct input_dev *input = msc->input;
 	int x = 0, y = 0, ii, clicks = 0, npoints;
 
-	/*
-	 * This driver also binds interfaces that hid-input does not create an
-	 * input device for, so msc->input can legitimately be NULL here. Leave
-	 * their reports to the generic HID paths instead of dereferencing it.
-	 */
-	if (!input)
-		return 0;
-
 	/* Protect against zero sized recursive calls from DOUBLE_REPORT_ID */
 	if (size < 1)
 		return 0;
@@ -995,6 +987,14 @@ static int magicmouse_raw_event(struct hid_device *hdev,
 		struct hid_report *report, u8 *data, int size)
 {
 	struct magicmouse_sc *msc = hid_get_drvdata(hdev);
+
+	/*
+	 * This driver also binds interfaces that hid-input does not create an
+	 * input device for, so msc->input can legitimately be NULL here. Leave
+	 * their reports to the generic HID paths instead of dereferencing it.
+	 */
+	if (!msc->input)
+		return 0;
 
 	return msc->input_ops.raw_event(hdev, report, data, size);
 }
